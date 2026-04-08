@@ -272,10 +272,10 @@ Starter starters[STARTER_COUNT] = {
      "가위 승리 시 +3코인", SLOT_SCISSORS},
     {"✊  강철 주먹 Lv1",
      "바위 패배 시 30% 확률으로 무승부", SLOT_ROCK},
-    {"🪙 행운의 동전 Lv1",
+    {"🪙  행운의 동전 Lv1",
      "경기 시작 시 +5코인", SLOT_PASSIVE},
     /* 3: 시민 퍼펙트 처치 해금 */
-    {"🍀 초심자의 운",
+    {"🍀  초심자의 운",
      "첫 경기 상대 스킬 확률 -30% (1경기 한정)", -1},
     /* 4: 억제자 처치 해금 */
     {"✋  허무의 장막 Lv1",
@@ -442,27 +442,36 @@ void show_unlock_info(void) {
 }
 
 /* =========================================================
-   경기 중 메뉴 (라운드 시작 전 매번 표시)
-   1: 라운드 진행  2: 내 스테이터스  3: 상대 정보
+   경기 중 메뉴 + 패 선택 통합 (라운드 시작 전 매번 표시)
+   1~3: 가위/바위/보 선택 → 해당 패 인덱스 반환
+   4: 내 스테이터스 확인 후 재표시
+   5: 상대방 스킬 & 확률 확인 후 재표시
    ========================================================= */
-void in_match_menu(void) {
+int in_match_menu(void) {
     while (1) {
         clear_screen();
         show_hud();
         printf("\n");
-        printf("  " C_BYELLOW "[1]" C_RESET " 계속 진행\n");
-        printf("  " C_BYELLOW "[2]" C_RESET " 내 스테이터스 확인\n");
-        printf("  " C_BYELLOW "[3]" C_RESET " 상대방 스킬 & 확률 파악\n");
+        printf(C_BWHITE "  +---------------+---------------+---------------+\n" C_RESET);
+        printf(C_BWHITE "  |" C_RESET
+               C_BYELLOW " [1] ✌  가위  " C_RESET
+               C_BWHITE "|" C_RESET
+               C_BBLUE  " [2] ✊  바위  " C_RESET
+               C_BWHITE "|" C_RESET
+               C_BGREEN " [3] ✋  보    " C_RESET
+               C_BWHITE "|\n" C_RESET);
+        printf(C_BWHITE "  +---------------+---------------+---------------+\n" C_RESET);
+        printf("  " C_BYELLOW "[4]" C_RESET " 내 스테이터스 확인\n");
+        printf("  " C_BYELLOW "[5]" C_RESET " 상대방 스킬 & 확률 파악\n");
         print_thin();
-        printf("  선택 " C_BYELLOW "(1~3)" C_RESET ": ");
+        printf("  선택 " C_BYELLOW "(1~5)" C_RESET ": ");
 
         int c = 0;
         scanf("%d", &c);
-        if      (c == 1) break;
-        else if (c == 2) show_my_status();
-        else if (c == 3) show_enemy_info();
+        if      (c >= 1 && c <= 3) return c - 1; /* 1~3 → SCISSORS/ROCK/PAPER */
+        else if (c == 4) show_my_status();
+        else if (c == 5) show_enemy_info();
     }
-    clear_screen();
 }
 
 /* =========================================================
@@ -926,32 +935,8 @@ void apply_item_effect(int result, int p_move, int *rp) {
                " 보 무승부 +2코인 (전체 %d코인)\n", coin);
         paper_win_streak = 0;
     } else {
-        if (p_move != PAPER) paper_win_streak = 0; /* 보 외 패 시 연승 리셋 */
+        if (p_move != PAPER) paper_win_streak = 0; /* 보 외 패배 시 연승 리셋 */
     }
-}
-
-/* =========================================================
-   플레이어 패 입력 UI
-   반환값: SCISSORS(0) / ROCK(1) / PAPER(2)
-   ========================================================= */
-int get_player_move(void) {
-    printf("\n");
-    printf(C_BWHITE "  +---------------+---------------+---------------+\n" C_RESET);
-    printf(C_BWHITE "  |" C_RESET
-           C_BYELLOW " [1] ✌  가위  " C_RESET
-           C_BWHITE "|" C_RESET
-           C_BBLUE  " [2] ✊  바위  " C_RESET
-           C_BWHITE "|" C_RESET
-           C_BGREEN " [3] ✋  보    " C_RESET
-           C_BWHITE "|\n" C_RESET);
-    printf(C_BWHITE "  +---------------+---------------+---------------+\n" C_RESET);
-
-    int choice = 0;
-    while (choice < 1 || choice > 3) {
-        printf("  선택 " C_BYELLOW "(1~3)" C_RESET ": ");
-        scanf("%d", &choice);
-    }
-    return choice - 1; /* 1~3 입력을 0~2 인덱스로 변환 */
 }
 
 /* =========================================================
@@ -960,22 +945,12 @@ int get_player_move(void) {
    반환값: 1 = 플레이어 승, -1 = 패, 0 = 무승부, 99 = 재경기(내부용)
    ========================================================= */
 int run_round(int is_rematch) {
-    if (!is_rematch) {
-        in_match_menu(); /* 일반 라운드: 정보 메뉴 표시 */
-    } else {
-        clear_screen();
-        show_hud();
-        printf("\n  " C_BRED "--- 재경기 ---" C_RESET "\n\n");
-    }
-
     /* [도박사] All-in: 라운드 시작 시 25% 확률 발동. 승리 시 라운드 점수 +2 */
     int allin_active = 0;
     if (current_enemy == 4 && !is_rematch) {
         int prob = 25 - (skill_debuff > 25 ? 25 : skill_debuff);
         if (rand_percent() < prob) {
             allin_active = 1;
-            printf("  " C_BYELLOW "💰 [All-in]" C_RESET
-                   C_BRED " 이번 판은 올인! 승리 시 2점!\n\n" C_RESET);
         }
     }
 
@@ -986,11 +961,24 @@ int run_round(int is_rematch) {
     /* 상대 패 미리 결정 (독심술 힌트에 사용) */
     int e_move = get_enemy_move();
 
-    /* 독심술 사용 기회 제공 (e_move를 인수로 전달하여 힌트 계산) */
-    if (item_lv[SLOT_ACTIVE] >= 1) use_active(e_move);
+    int p_move;
+    if (!is_rematch) {
+        /* 독심술 사용 기회 → 패 선택 통합 메뉴 */
+        if (item_lv[SLOT_ACTIVE] >= 1) use_active(e_move);
+        p_move = in_match_menu(); /* 메뉴에서 패 선택까지 처리 */
+    } else {
+        /* 재경기: HUD만 표시 후 바로 패 선택 */
+        clear_screen();
+        show_hud();
+        printf("\n  " C_BRED "--- 재경기 ---" C_RESET "\n\n");
+        if (item_lv[SLOT_ACTIVE] >= 1) use_active(e_move);
+        p_move = in_match_menu();
+    }
 
-    /* 플레이어 패 입력 */
-    int p_move = get_player_move();
+    /* All-in 발동 메시지 (패 선택 이후 출력) */
+    if (allin_active)
+        printf("  " C_BYELLOW "💰 [All-in]" C_RESET
+               C_BRED " 이번 판은 올인! 승리 시 2점!\n\n" C_RESET);
 
     /* 대결 연출: 양측 선택 패 출력 */
     printf("\n");
@@ -1197,9 +1185,8 @@ void run_game(void) {
 void show_title(void) {
     clear_screen();
     printf("\n\n");
-    printf(C_BCYAN "        ✌  ✊  ✋\n\n" C_RESET);
-    printf(C_BWHITE "    CLASH OF HANDS\n" C_RESET);
-    printf(C_WHITE  "    7명의 상대를 처치하라\n\n" C_RESET);
+    printf(C_BWHITE "        TACTICAL RPS ROGUELIKE\n" C_RESET);
+    printf(C_WHITE  "    운이 아닌 전략으로 7명을 꺾어라\n\n" C_RESET);
     press_enter();
 }
 
