@@ -1,8 +1,8 @@
 CC      = gcc
 CFLAGS  = -Wall -Wextra -O2 -std=c11
-LIBS    = -lSDL2 -lGLEW -lGL -lm
+LIBS    = -lSDL2 -lm
 
-SRCS    = main.c stroke.c render.c eraser.c fileio.c shape.c undo.c camera.c
+SRCS    = main.c stroke.c render.c eraser.c fileio.c shape.c undo.c
 OBJS    = $(SRCS:.c=.o)
 TARGET  = vector_painter
 

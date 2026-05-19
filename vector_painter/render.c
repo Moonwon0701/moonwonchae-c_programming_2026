@@ -1,167 +1,108 @@
 #include "render.h"
 
 /* ─────────────────────────────────────────
-   내부 헬퍼: OpenGL 2D 선분 하나 그리기
+   두꺼운 선 그리기 (SDL은 기본 1px라 원으로 두께 표현)
 ───────────────────────────────────────── */
-static void drawSegment(float x0, float y0, float x1, float y1,
-                        float thickness, Color c) {
-    glLineWidth(thickness);
-    glColor4f(c.r, c.g, c.b, c.a);
-    glBegin(GL_LINES);
-        glVertex2f(x0, y0);
-        glVertex2f(x1, y1);
-    glEnd();
-}
+static void drawThickLine(SDL_Renderer *renderer,
+                          float x0, float y0, float x1, float y1,
+                          float thickness, Color c, Uint8 alpha) {
+    SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, alpha);
 
-/* ─────────────────────────────────────────
-   renderStrokeFixed
-   - 모든 선분을 동일한 두께와 불투명도로 렌더링
-───────────────────────────────────────── */
-void renderStrokeFixed(const Stroke *stroke) {
-    if (!stroke || stroke->pointCount < 2) return;
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    for (int i = 0; i < stroke->pointCount - 1; i++) {
-        drawSegment(stroke->points[i].x,   stroke->points[i].y,
-                    stroke->points[i+1].x, stroke->points[i+1].y,
-                    stroke->thickness, stroke->color);
+    float dx = x1 - x0, dy = y1 - y0;
+    float len = sqrtf(dx*dx + dy*dy);
+    if (len < 1.0f) {
+        /* 점 하나: 원으로 표시 */
+        int r = (int)(thickness / 2.0f);
+        for (int dy2 = -r; dy2 <= r; dy2++)
+            for (int dx2 = -r; dx2 <= r; dx2++)
+                if (dx2*dx2 + dy2*dy2 <= r*r)
+                    SDL_RenderDrawPoint(renderer, (int)x0+dx2, (int)y0+dy2);
+        return;
     }
-}
 
-/* ─────────────────────────────────────────
-   renderStrokeOpacity
-   - 선분이 겹칠수록 투명도가 누적되어 진해짐
-   - 각 선분을 낮은 alpha로 개별 렌더링
-───────────────────────────────────────── */
-void renderStrokeOpacity(const Stroke *stroke) {
-    if (!stroke || stroke->pointCount < 2) return;
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    Color c = stroke->color;
-    c.a = 0.15f;   // 낮은 alpha → 겹칠수록 누적
-
-    for (int i = 0; i < stroke->pointCount - 1; i++) {
-        drawSegment(stroke->points[i].x,   stroke->points[i].y,
-                    stroke->points[i+1].x, stroke->points[i+1].y,
-                    stroke->thickness, c);
-    }
-}
-
-/* ─────────────────────────────────────────
-   renderStrokeSpeed
-   - 속도가 빠를수록 선이 얇아짐
-   - speeds[] 배열 값을 두께에 반영
-───────────────────────────────────────── */
-void renderStrokeSpeed(const Stroke *stroke) {
-    if (!stroke || stroke->pointCount < 2) return;
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    for (int i = 0; i < stroke->pointCount - 1; i++) {
-        /* speed가 클수록 두께 감소, 최소 1.0f 보장 */
-        float spd = stroke->speeds[i];
-        float t = stroke->thickness / (1.0f + spd * 0.05f);
-        if (t < 1.0f) t = 1.0f;
-
-        drawSegment(stroke->points[i].x,   stroke->points[i].y,
-                    stroke->points[i+1].x, stroke->points[i+1].y,
-                    t, stroke->color);
-    }
-}
-
-/* ─────────────────────────────────────────
-   renderStroke
-   - penType에 따라 적절한 렌더 함수 디스패치
-───────────────────────────────────────── */
-void renderStroke(const Stroke *stroke) {
-    if (!stroke) return;
-    switch (stroke->penType) {
-        case PEN_FIXED:   renderStrokeFixed(stroke);   break;
-        case PEN_OPACITY: renderStrokeOpacity(stroke); break;
-        case PEN_SPEED:   renderStrokeSpeed(stroke);   break;
-        default:          renderStrokeFixed(stroke);   break;
-    }
-}
-
-/* ─────────────────────────────────────────
-   renderAllStrokes
-   - 캔버스의 모든 획을 등록 순서대로 렌더링
-───────────────────────────────────────── */
-void renderAllStrokes(const Canvas *canvas) {
-    if (!canvas) return;
-    for (int i = 0; i < canvas->strokeCount; i++) {
-        renderStroke(canvas->strokes[i]);
+    /* 선분을 thickness/2 반경의 원들로 채워서 두껍게 */
+    int r = (int)(thickness / 2.0f);
+    if (r < 1) r = 1;
+    int steps = (int)(len) + 1;
+    for (int s = 0; s <= steps; s++) {
+        float t = (float)s / steps;
+        float cx = x0 + t * dx;
+        float cy = y0 + t * dy;
+        for (int dy2 = -r; dy2 <= r; dy2++)
+            for (int dx2 = -r; dx2 <= r; dx2++)
+                if (dx2*dx2 + dy2*dy2 <= r*r)
+                    SDL_RenderDrawPoint(renderer, (int)cx+dx2, (int)cy+dy2);
     }
 }
 
 /* ─────────────────────────────────────────
    renderBackground
-   - 단색 배경 사각형 렌더링
 ───────────────────────────────────────── */
-void renderBackground(Color bgColor) {
-    glDisable(GL_BLEND);
-    glColor4f(bgColor.r, bgColor.g, bgColor.b, 1.0f);
-    glBegin(GL_QUADS);
-        glVertex2f(-1.0f, -1.0f);
-        glVertex2f( 1.0f, -1.0f);
-        glVertex2f( 1.0f,  1.0f);
-        glVertex2f(-1.0f,  1.0f);
-    glEnd();
+void renderBackground(SDL_Renderer *renderer, Color bgColor) {
+    SDL_SetRenderDrawColor(renderer, bgColor.r, bgColor.g, bgColor.b, 255);
+    SDL_RenderClear(renderer);
 }
 
 /* ─────────────────────────────────────────
-   renderEraserCursor
-   - 지우개 모드일 때 커서 위치에 원 표시
+   renderStroke - penType에 따라 렌더링
 ───────────────────────────────────────── */
-void renderEraserCursor(float x, float y, float radius) {
-    glDisable(GL_BLEND);
-    glColor4f(0.4f, 0.4f, 0.4f, 1.0f);
-    glLineWidth(1.5f);
-    glBegin(GL_LINE_LOOP);
+void renderStroke(SDL_Renderer *renderer, const Stroke *stroke) {
+    if (!stroke || stroke->pointCount < 2) return;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    for (int i = 0; i < stroke->pointCount - 1; i++) {
+        float x0 = stroke->points[i].x,   y0 = stroke->points[i].y;
+        float x1 = stroke->points[i+1].x, y1 = stroke->points[i+1].y;
+        float thickness = stroke->thickness;
+        Uint8 alpha = stroke->color.a;
+
+        switch (stroke->penType) {
+            case PEN_FIXED:
+                /* 두께 고정, 완전 불투명 */
+                drawThickLine(renderer, x0, y0, x1, y1,
+                              thickness, stroke->color, alpha);
+                break;
+
+            case PEN_OPACITY:
+                /* 낮은 alpha로 겹칠수록 진해짐 */
+                drawThickLine(renderer, x0, y0, x1, y1,
+                              thickness, stroke->color, 40);
+                break;
+
+            case PEN_SPEED: {
+                /* 빠를수록 얇아짐 */
+                float spd = stroke->speeds[i];
+                float t = thickness / (1.0f + spd * 0.05f);
+                if (t < 1.0f) t = 1.0f;
+                drawThickLine(renderer, x0, y0, x1, y1,
+                              t, stroke->color, alpha);
+                break;
+            }
+        }
+    }
+}
+
+/* ─────────────────────────────────────────
+   renderAllStrokes
+───────────────────────────────────────── */
+void renderAllStrokes(SDL_Renderer *renderer, const Canvas *canvas) {
+    if (!canvas) return;
+    for (int i = 0; i < canvas->strokeCount; i++)
+        renderStroke(renderer, canvas->strokes[i]);
+}
+
+/* ─────────────────────────────────────────
+   renderEraserCursor - 원형 커서 표시
+───────────────────────────────────────── */
+void renderEraserCursor(SDL_Renderer *renderer, float x, float y, float radius) {
+    SDL_SetRenderDrawColor(renderer, 100, 100, 100, 200);
     int segs = 32;
     for (int i = 0; i < segs; i++) {
-        float angle = 2.0f * 3.14159f * i / segs;
-        /* 스크린 좌표 → NDC 변환 (간단화: 외부에서 NDC로 넘겨받는다고 가정) */
-        glVertex2f(x + cosf(angle) * radius, y + sinf(angle) * radius);
-    }
-    glEnd();
-}
-
-/* ─────────────────────────────────────────
-   renderScene3D
-   - 3D 씬 전체 렌더링
-   - 카메라 행렬 설정 후 각 획 렌더링
-───────────────────────────────────────── */
-void renderScene3D(const Scene *scene) {
-    if (!scene) return;
-
-    /* TODO: 프로젝션 / 뷰 행렬 설정 (OpenGL glMatrixMode 또는 셰이더 유니폼) */
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    /* gluPerspective(scene->camera.fov, (float)WINDOW_W/WINDOW_H, 0.1f, 1000.0f); */
-
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-    /* gluLookAt(camera.position, camera.target, camera.up) 적용 */
-
-    /* 3D 획 렌더링 */
-    for (int i = 0; i < scene->canvas->strokeCount; i++) {
-        Stroke *s = scene->canvas->strokes[i];
-        if (!s->is3D || s->pointCount < 2) continue;
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glLineWidth(s->thickness);
-        glColor4f(s->color.r, s->color.g, s->color.b, s->color.a);
-        glBegin(GL_LINE_STRIP);
-        for (int j = 0; j < s->pointCount; j++) {
-            glVertex3f(s->points3D[j].x, s->points3D[j].y, s->points3D[j].z);
-        }
-        glEnd();
+        float a0 = 2.0f * 3.14159f * i / segs;
+        float a1 = 2.0f * 3.14159f * (i+1) / segs;
+        SDL_RenderDrawLine(renderer,
+            (int)(x + cosf(a0)*radius), (int)(y + sinf(a0)*radius),
+            (int)(x + cosf(a1)*radius), (int)(y + sinf(a1)*radius));
     }
 }
